@@ -1,0 +1,255 @@
+###########################################################################################################################
+# DFS - Daily Fantasy Sports - Fantasy Basketball
+###########################################################################################################################
+###################################################
+# Description of Function Arguments: 
+###################################################
+#### Function Objective: What does the function do?
+# Function returns the top lineup under your constraints, with each team's expected total points 
+# and the total salary used (will be under the cap)
+
+
+#### List of Function Arguments: Customizable Constraints for Lineup Optimizaiton
+# 1. train - 'players list' in .csv format with the following 13 columns (in this order):
+# 2. cap -  Max salary cap (for FanDuel it is currently 60,000, for DraftKings it is 50,000)
+# 3. constraint - Rules for lineup selection
+# 4. league - Which fantasy site you are using - FanDuel or DraftKings. 
+# 5. setplayers - Allows you to force lineups with players you want
+# 6. removeteams - Allows you to remove certain teams from being considered 
+
+
+#### train: 'players list' in .csv format with the following 8 columns (in this order):
+# Id (A unique numeric identifier for each player)
+# Position (PG, SG, SF, PF, C)
+# First Name
+# Full Name
+# Last Name
+# Expected Points
+# Games Played
+# Salary
+# Matchup
+# Team (player's team or defensive team)
+# Opponent (opposing team)
+# Injury
+# Injury Details
+#
+# Can change 'Expected Points' to your expected points for that player and remove all players you don't want
+# in the lineup (injuries, etc.)
+
+
+#### cap: Max salary cap (for FanDuel it is currently 60,000, for DraftKings it is 50,000)
+
+
+#### constraint: Rules for lineup selection
+# 'none' for no constraints on lineup configuration
+#
+# 'all_diff' TBD
+#
+# 'no_opp' TBD
+
+
+#### league: Which fantasy site you are using - FanDuel or DraftKings. 
+# Each site has a slightly different lineup structure of 8 or 9 players.
+# FanDuel lineup structure:     (PG, PG, SG, SG, SF, SF, PF, PF, C)
+# DraftKings lineup structure:  (PG, SG, SF, PF, C, G, F, UTIL) where UTIL is any position.
+
+
+##### setplayers: Allows you to force lineups with players you want
+# Simply include a .csv in the same format as 'train', with your selected players chosen.
+
+
+#### removeteams: Allows you to remove certain teams from being considered 
+# Slightly different than simply removing players from the 'train' file in that this only removes 
+# specific teams. It is used in the 'top_teams' function. Should be a matrix, with each column
+# a binary vector indicating the selected players for a single team; each column is a
+# different team; find_teams' then removes these teams.
+
+
+###################################################
+# Install packages 
+###################################################
+#install.packages("lpSolveAPI")
+library(lpSolveAPI)
+
+
+###################################################
+# Read in the dataset
+###################################################
+# Set your working directory
+setwd("/Users/kevin8523/Library/Mobile Documents/com~apple~CloudDocs/Desktop/Windows Stuff Moved Over/Software Tools (Python, R, Tableau,etc)/Kaggle & Case studies/20171202DraftKings/Fantasy_Basketball_Optimization")
+train <- read.csv("fantasy_points.csv", header = T)
+
+
+###################################################
+# Data Prep
+###################################################
+train$X <- NULL
+train$X.1 <- NULL
+
+# *******NOTE******* If you are using FanDuel, a couple of chnages have to be made: 
+# 1. Line 184 change 7 to 8 
+# 2. Line 244 change 8 to 9
+
+
+###################################################
+# Create Function to Optimize Lineup
+###################################################
+# Function: train = CSV of Players & Scores, cap = Salary Cap $50,000 , constraints = Constraints on Player Choosen, 
+#           league = League set up, setplayers = Set players you want, remove teams = Remove teams you dont want
+
+# Creates the function
+find_teams <- function(train, cap, constraint = c("none", "all_diff", "no_opp"), 
+                       league = c("FanDuel", "DraftKings"), setplayers = NULL, removeteams = NULL) {
+  
+  colnames(train) <- c("Id", "Position", "FirstName", "FullName" ,"LastName", "ExpectedPoints", "GamesPlayed", "Salary", "Matchup", "Team", "Opponent", "Injury", "InjuryDetails")
+  
+  ## set constraints to use
+  pg <- ifelse(train$Position == "PG", 1, 0)
+  sg <- ifelse(train$Position == "SG", 1, 0)
+  sf <- ifelse(train$Position == "SF", 1, 0)
+  pf <- ifelse(train$Position == "PF", 1, 0)
+  c <- ifelse(train$Position == "C", 1, 0)
+  # g <- ifelse(train$Position == "PG" | train$Position == "SG", 1, 0)
+  # f <- ifelse(train$Position == "SF" | train$Position == "PF", 1, 0)
+  # ut <- ifelse(train$Position == "PG" | train$Position == "SG" | train$Position == "SF" | train$Position == "PF" | train$Position == "C", 1, 0)
+
+  ## number of decision variables is equal to the number of fantasy players/teams
+  lpfantasy <- make.lp(0, nrow(train))
+  
+  ## Set objective function with the expected number of points
+  set.objfn(lpfantasy, train$ExpectedPoints)
+  
+  ## Make sure the decision variables are binary
+  set.type(lpfantasy, seq(1, nrow(train), by=1), type = c("binary"))
+  
+  ## Add some contraints
+  ## Select at least 1 of each position, additional guard & forward, etc.
+  ## Depends on what fantasy league you are playing in, currently for FanDuel and DraftKings
+  if(league == "FanDuel") {
+    add.constraint(lpfantasy, pg, "=", 2)
+    add.constraint(lpfantasy, sg, "=", 2)
+    add.constraint(lpfantasy, sf, "=", 2)
+    add.constraint(lpfantasy, pf, "=", 2)
+    add.constraint(lpfantasy, c, "=", 1)
+  }
+  if(league == "DraftKings") {
+    dk_total <- pg + sg + sf + pf + c 
+    pg_min <- pg
+    sg_min <- sg
+    sf_min <- sf
+    pf_min <- pf
+    c_min <- c
+    add.constraint(lpfantasy, pg_min, ">=", 1)
+    add.constraint(lpfantasy, pg, "<=", 3)
+    add.constraint(lpfantasy, sg_min, ">=", 1)
+    add.constraint(lpfantasy, sg, "<=", 3)
+    add.constraint(lpfantasy, sf_min, ">=", 1)
+    add.constraint(lpfantasy, sf, "<=", 3)
+    add.constraint(lpfantasy, pf_min, ">=", 1)
+    add.constraint(lpfantasy, pf, "<=", 3)
+    add.constraint(lpfantasy, c_min, ">=", 1)
+    add.constraint(lpfantasy, c, "<=", 2)
+    add.constraint(lpfantasy, dk_total, "=", 8)
+  }
+  
+  ## Add monetary constraint, max salary for the team
+  add.constraint(lpfantasy, train$Salary, "<=", cap)
+  
+  ## Set objective direction (Maximize or minimize problem)
+  lp.control(lpfantasy, sense='max')
+  
+  ## Create parameters: teams, constraint rules (None, all_diff, no_opp)
+  team_names <- levels(factor(train$Team))
+  constraint <- match.arg(constraint)
+  if(!is.null(setplayers)) {
+    if(league == "FanDuel") {
+      if((sum(setplayers$Position == "PG") > 2) || (sum(setplayers$Position == "SG") > 2) || (sum(setplayers$Position == "SF") > 2) ||
+         (sum(setplayers$Position == "PF") > 2) || (sum(setplayers$Position == "C") > 1))
+        stop("One of your positions has too many players")
+    }
+    if(league == "DraftKings") {
+      if((sum(setplayers$Position == "PG") > 3) || (sum(setplayers$Position == "SG") > 3) || (sum(setplayers$Position == "SF") > 3) ||
+         (sum(setplayers$Position == "PF") > 3) || (sum(setplayers$Position == "C") > 2))
+        stop("One of your positions has too many players")
+    }
+    ## Set constraints that each player here must be in lineup
+    for(k in 1:nrow(setplayers)) {
+      add.constraint(lpfantasy, ifelse(setplayers$Id[k] == train$Id, 1, 0), "=", 1)
+    }
+  }
+  # lineup total - 1 = # below  ==> 8 exact same, 7 similar , 0 not similar
+  if(!is.null(removeteams)) {
+    if(nrow(removeteams) != nrow(train))
+      stop("Your team restrictions do not match the number of players included in the 'train' file")
+    for(m in 1:ncol(removeteams)) {
+      add.constraint(lpfantasy, removeteams[, m], "<=", 7)
+    }
+  }
+  
+  team <- data.frame(matrix(0, 1, ncol(train) + 2))
+  colnames(team) <- c(colnames(train), "TeamSalary", "TotalPoints")
+  
+  ## Solve the model, if this returns 0 an optimal solution is found
+  solve(lpfantasy)
+  if(solve(lpfantasy) != 0)
+    stop("Optimization failed at some step")
+  
+  ## Get the players on the team
+  team_select <- subset(data.frame(train, get.variables(lpfantasy)), get.variables.lpfantasy. == 1)
+  team_select$get.variables.lpfantasy. <- NULL
+  team_select$TeamSalary <- sum(team_select$Salary)
+  team_select$TotalPoints <- sum(team_select$ExpectedPoints)
+  team <- rbind(team, team_select)
+  team <- team[-1,]
+  rownames(team) <- NULL
+  team
+}
+
+
+###################################################
+# Run Function to Optimize Lineup
+###################################################
+# 1. Remove all injuries and non-desireable players first
+# 2. Make sure to change
+#     a. The 'Expected Points' column to the number of points you expect the player to score this week
+#     b. Make sure to include up to date matchup information (which teams will be playing eachother).
+
+
+# train <- read.csv("fantasy_points.csv", header = T)
+
+# Returns the top ten teams with no constraints, subject to the max salary cap of 50,000
+test1 <- find_teams(train, 50000, constraint = "none", league = "DraftKings", setplayers = NULL, removeteams = NULL)
+
+# Keep Giannis and Kyle Lowry (Input the ID of desired players)
+setplayers <- subset(train, (Id == "22629-40199" | Id == "22629-9535"))
+test2 <- find_teams(train, 50000, constraint = "none", league = "DraftKings", setplayers = setplayers, removeteams = NULL)
+
+
+# Small function to generate the top set of teams
+# All arguments are the same, except you must enter the number of top teams to return - 'num_top'
+
+top_teams <- function(train, num_top, cap, constraint, league, setplayers = NULL) {
+  result <- find_teams(train, cap, constraint = constraint, league = league, setplayers = setplayers)
+  restrict <- as.matrix(rep(0, nrow(train)))
+  restrict[match(result$Id, train$Id), 1] <- 1
+  j <- 1
+  
+  while(j < num_top) {
+    resultnew <- find_teams(train, cap, constraint = constraint, league = league, setplayers = setplayers, removeteams = restrict)
+    restrict <- cbind(restrict, rep(0, nrow(restrict)))
+    restrict[match(resultnew$Id, train$Id), j] <- 1
+    result <- rbind(result, resultnew)
+    j <- j + 1
+  }
+  
+  TeamNumber <- rep(1:num_top, each = 8)
+  result <- cbind.data.frame(result, TeamNumber)
+  result
+}
+
+# Generate the top 10 teams with no constraints (this may be a bit slow with other constraints)
+test3 <- top_teams(train, 10, 50000, constraint = "none", league = "DraftKings", setplayers = NULL)
+
+
+# Write to csv
+write.csv(test3, file = "dfs_nba_lineup.csv")
